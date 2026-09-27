@@ -9,6 +9,7 @@ services:
             DEBUG: "FALSE"
             TZ: "Europe/Amsterdam"
         restart: unless-stopped
+        stop_grace_period: 90s
         ports:
         - "5520:5520/udp"
         volumes:

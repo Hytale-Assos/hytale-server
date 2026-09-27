@@ -1,5 +1,0 @@
-[Network]
-NetworkDeleteOnStop=true
-
-[Install]
-WantedBy=default.target

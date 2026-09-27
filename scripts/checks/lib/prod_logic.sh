@@ -31,7 +31,10 @@ check_java_mem() {
 
     local xmx_mb=0
     if [ "$xmx_num" -gt 0 ]; then
-        [[ "$xmx_unit" =~ [gG] ]] && xmx_mb=$((xmx_num * 1024)) || xmx_mb=$xmx_num
+        case "$xmx_unit" in
+            [gG]) xmx_mb=$((xmx_num * 1024)) ;;
+            *)    xmx_mb=$xmx_num ;;
+        esac
     fi
 
     # Detect Docker/Cgroup Limits
@@ -45,7 +48,10 @@ check_java_mem() {
         if [ "$limit_bytes" != "max" ] && [ "$limit_bytes" -lt 9000000000000000000 ]; then
             local limit_mb=$((limit_bytes / 1024 / 1024))
             
-            if [ "$xmx_mb" -eq 0 ]; then
+            if [ "$xmx_mb" -eq 0 ] && echo "${JAVA_ARGS:-}" | grep -q 'MaxRAMPercentage'; then
+                log_success
+                echo -e "      ${DIM}↳ Java Heap: sized from limit ($(echo "$JAVA_ARGS" | grep -oE 'MaxRAMPercentage=[0-9.]+')) | Container: ${limit_mb}MB${NC}"
+            elif [ "$xmx_mb" -eq 0 ]; then
                 log_warning "No -Xmx limit detected." "Java may grow until Docker kills the container. Add -Xmx to JAVA_ARGS."
             elif [ "$xmx_mb" -gt "$limit_mb" ]; then
                 log_error "Heap ($xmx_mb MB) exceeds Docker limit ($limit_mb MB)!" "The container will OOM-kill immediately on load."

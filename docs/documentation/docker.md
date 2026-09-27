@@ -19,7 +19,12 @@ The Hytale server container is highly configurable through environment variables
 | `SERVER_PORT`                 | The primary UDP port for game traffic                                                                   | `5520`     |
 | `SERVER_IP`                   | The IP address the server binds to                                                                      | `0.0.0.0`  |
 | `PROD`                        | Set to `TRUE` to run production readiness audits                                                        | `FALSE`    |
-| `JAVA_ARGS`                   | Additional flags for the JVM (expert use only)                                                          | `(Empty)`  |
+| `JAVA_ARGS`                   | Flags for the JVM. Setting it replaces the default entirely (e.g. `-Xmx6G`)                             | `-XX:MaxRAMPercentage=75.0` |
+| `NO_COLOR`                    | Set to `TRUE` for plain-text logs (journald, log collectors)                                            | `FALSE`    |
+| `RUN_AUTO_AUTH`               | Set to `FALSE` to disable the automatic `/auth login device` on first boot                             | `TRUE`     |
+| `HYTALE_TARGET_VERSION`       | Hytale release the image was built for (set by CI, shown at boot next to the installed version)        | `(image)`  |
+| `HYTALE_DOWNLOADER_DIR`       | Where Hypixel's downloader is installed on first use (keep it in the data volume)                       | `/home/container/.hytale-downloader` |
+| `HYTALE_STOP_COMMAND`         | Console command sent on `docker stop` / `systemctl stop` so the world is saved before exit              | `/stop`    |
 
 ---
 
@@ -99,3 +104,16 @@ To ensure your world, player data, and configurations are saved when the contain
 ## Folder structure
 
 The following folder structure is used:
+
+## Console commands without a TTY
+
+When the container runs detached (Compose `-d`, systemd, Podman Quadlets), send
+server commands with the bundled helper:
+
+```bash
+docker exec hytale-server hytale-cmd /op add <player>
+podman exec hytale hytale-cmd /say Restarting in 5 minutes
+```
+
+Stopping the container sends `HYTALE_STOP_COMMAND` to the console, so allow
+enough stop time for the world to save (`docker stop -t 90`, `stop_grace_period: 90s`).

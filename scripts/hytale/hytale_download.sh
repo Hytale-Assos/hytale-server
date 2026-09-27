@@ -46,10 +46,12 @@ extract_server() {
     rm -f "$ZIP_FILE"
     log_success
 
-    # Set ownership and permissions
+    # Set ownership and permissions. Fine-grained modes are applied later by
+    # checks/permissions.sh; never chmod -R here, it would expose credentials.
     log_step "Setting file permissions"
-    chown -R container:container "$BASE_DIR" 2>/dev/null || true
-    chmod -R 755 "$BASE_DIR" && log_success || log_warning "Chmod failed" "May need manual adjustment."
+    fix_ownership "$BASE_DIR"
+    protect_secrets
+    log_success
 }
 
 run_downloader() {
@@ -106,6 +108,9 @@ if [ -z "$ZIP_FILE" ]; then
 fi
 
 log_break
+
+# The package is named after the server version (e.g. 0.6.8.zip)
+basename "$ZIP_FILE" .zip > "$BASE_DIR/.hytale-version"
 
 # Extract and clean up
 log_step "Extracting... (Please wait)"

@@ -39,10 +39,6 @@ extract_and_stage_server() {
         printf "      ${DIM}↳ Target:${NC} ${GREEN}%s${NC}\n" "$STAGING_DIR"
     fi
 
-    # Extract into the staging area (NOT $BASE_DIR): the apply step below copies
-    # from updater/staging/ into the live server dirs. Extracting straight to
-    # $BASE_DIR left staging empty, so the "Missing Server/HytaleServer.jar"
-    # guard always tripped and no update was ever applied.
     if 7z x "$ZIP_FILE" -aoa -bsp1 -mmt=on -o"$STAGING_DIR" >/dev/null 2>&1; then
         log_success
     else
@@ -50,27 +46,23 @@ extract_and_stage_server() {
         exit 1
     fi
 
-    # Apply staged files to server directories
-    cd "$GAME_DIR"
-    if [ -f "updater/staging/Server/HytaleServer.jar" ]; then
-        cp -f updater/staging/Server/HytaleServer.jar Server/
-        [ -d "updater/staging/Server/Licenses" ]          && rm -rf Server/Licenses && cp -r updater/staging/Server/Licenses Server/
-        [ -f "updater/staging/Assets.zip" ]               && cp -f updater/staging/Assets.zip ./
-        [ -f "updater/staging/start.sh" ]                 && cp -f updater/staging/start.sh ./
-        [ -f "updater/staging/start.bat" ]                && cp -f updater/staging/start.bat ./
+    # Only validate here. The staged files are applied by hytale_start.sh
+    # (apply_staged_update), the same path used by the in-game /update command.
+    log_step "Validating update package"
+    if [ -f "$STAGING_DIR/Server/HytaleServer.jar" ]; then
+        # The package is named after the server version (e.g. 0.6.8.zip)
+        basename "$ZIP_FILE" .zip > "$STAGING_DIR/.hytale-version"
         log_success
     else
+        rm -rf "$STAGING_DIR"
         log_error "Invalid update package" "Missing Server/HytaleServer.jar"
-        rm -rf updater/staging
         exit 1
     fi
 
-    # Cleanup and permissions
     log_step "Cleaning up"
     rm -f "$ZIP_FILE"
-    rm -rf updater/staging
-    chown -R container:container "$BASE_DIR" 2>/dev/null || true
-    chmod -R 755 "$BASE_DIR" && log_success || log_warning "Chmod failed" "May need manual adjustment."
+    fix_ownership "$GAME_DIR/updater"
+    log_success
 }
 
 # ==========================================

@@ -32,6 +32,7 @@ set -eu
 # --- Legacy Path Detection ---
 LEGACY_ROOT="/home/container/game"
 LEGACY_SERVER_DIR="$LEGACY_ROOT/Server"
+BACKUP_MARKER="/home/container/.legacy_backup_done"
 
 log_section "Scanning for legacy folder structure"
 
@@ -44,12 +45,23 @@ fi
 log_step "Legacy /game structure detected"
 log_success
 
+# Back up once. Archiving on every boot used to pile up full copies of the
+# volume (each one including the previous archives).
+if [ -f "$BACKUP_MARKER" ]; then
+    log_step "Legacy backup"
+    printf "${DIM}Already done ($(cat "$BACKUP_MARKER")), skip${NC}\n"
+    exit 0
+fi
+
 # --- Backup Before Migration ---
 BACKUP_FILE="/home/container/.migrate_backup_$(date +%Y%m%d_%H%M%S).tar.gz"
-log_section "Creating backup of /home/container"
+log_section "Creating backup of legacy /home/container/game"
 
-if tar -czf "$BACKUP_FILE" -C /home/container .; then
+if tar -czf "$BACKUP_FILE" -C /home/container game; then
+    printf '%s\n' "$BACKUP_FILE" > "$BACKUP_MARKER"
     log_success "Backup: $BACKUP_FILE ($(du -h "$BACKUP_FILE" | cut -f1))"
+    log_warning "Legacy data is not migrated automatically." \
+        "Move the contents of /home/container/game/ to /home/container/ to use them."
 else
     log_error "Failed to create backup" "Check permissions on /home/container"
 fi

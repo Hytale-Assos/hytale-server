@@ -17,6 +17,8 @@ Simply use the docker run command or docker compose, follow the authentication s
 > [!WARNING]
 > **A valid Hytale game license is required for container authorization.**
 >
+> The image contains no Hytale files (Hytale EULA §3.3 forbids redistributing them). Hypixel's official downloader and the server are fetched at first start with your own account.
+>
 > On the first launch, the server will display an authentication URL in your terminal. Open this link in your browser, log in with your Hytale account, and follow the instructions to authorize the server.
 
 ## Quick start
@@ -33,6 +35,7 @@ docker run \
   -v "hytale-server:/home/container" \
   -v "/etc/machine-id:/etc/machine-id:ro" \
   --restart unless-stopped \
+  --stop-timeout 90 \
   deinfreu/hytale-server:latest
 ```
 
@@ -47,6 +50,7 @@ services:
     image: deinfreu/hytale-server:latest
     container_name: hytale-server
     restart: unless-stopped
+    stop_grace_period: 90s
     ports:
       - "5520:5520/udp"
     volumes:
@@ -55,6 +59,10 @@ services:
     tty: true
     stdin_open: true
 ```
+
+### Podman (rootless, systemd)
+
+Hardened rootless setup with Quadlets (no root, no capabilities, read-only rootfs, graceful stop): see [examples/rootless-podman-quadlets](examples/rootless-podman-quadlets/README.md).
 
 For additional deployment configurations, see our [examples](https://github.com/deinfreu/hytale-server-container/tree/main/examples) or refer to the [installation](https://hytale-server-container.com/installation/container_installation/?utm_source=github&utm_medium=social&utm_campaign=github_readme) and [OS-specific](https://hytale-server-container.com/guide/?utm_source=github&utm_medium=social&utm_campaign=github_readme) guides.
 
@@ -80,7 +88,9 @@ data/
 │   ├── HytaleServer.jar
 │   ├── permissions.json
 │   └── whitelist.json
+├── .hytale-downloader/            # Hypixel's downloader, fetched on first start
 ├── .hytale-downloader-credentials.json
+├── .hytale-version                # installed server version (e.g. 0.6.8)
 └── Assets.zip
 ```
 

@@ -28,7 +28,10 @@ export SERVER_PORT="${SERVER_PORT:-5520}"
 export SERVER_IP="${SERVER_IP:-0.0.0.0}"
 export DEBUG="${DEBUG:-FALSE}"
 export PROD="${PROD:-FALSE}"
-export JAVA_ARGS="${JAVA_ARGS:-}"
+# Without an explicit heap setting the JVM only uses 25% of the container's
+# memory limit. Size the heap from the limit instead; any user-supplied
+# JAVA_ARGS (e.g. -Xmx) replaces this default entirely.
+export JAVA_ARGS="${JAVA_ARGS:--XX:MaxRAMPercentage=75.0}"
 export TZ="${TZ:-UTC}"
 export BASE_DIR="/home/container"
 export GAME_DIR="$BASE_DIR"
@@ -85,6 +88,7 @@ export HYTALE_VALIDATE_WORLD_GEN="${HYTALE_VALIDATE_WORLD_GEN:-FALSE}"
 export HYTALE_VERSION="${HYTALE_VERSION:-FALSE}"
 export HYTALE_WORLD_GEN="${HYTALE_WORLD_GEN:-}"
 export RUN_AUTO_AUTH="${RUN_AUTO_AUTH:-TRUE}"
+export HYTALE_STOP_COMMAND="${HYTALE_STOP_COMMAND:-/stop}"
 
 # ==========================================
 # MAIN EXECUTION FLOW

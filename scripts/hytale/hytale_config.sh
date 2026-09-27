@@ -72,34 +72,35 @@ apply_env() {
     local value="$2"
     local value_type="${3:-auto}"
     local tmp_file="${CONFIG_FILE}${CONFIG_TMP_SUFFIX}"
+    local filter
 
     [ -z "$value" ] && return 0
 
+    # The value is always passed via --arg, never spliced into the filter, so
+    # quotes or jq syntax in it (e.g. a password) cannot break the config.
     case "$value_type" in
-        string)
-            jq "$path = \"$value\"" "$CONFIG_FILE" > "$tmp_file" 2>/dev/null || {
-                printf "      ${YELLOW}⚠ Failed to apply %s${NC}\n" "$path"; rm -f "$tmp_file"; return 1
-            }
-            ;;
-        number)
-            jq "$path = ($value | tonumber)" "$CONFIG_FILE" > "$tmp_file" 2>/dev/null || {
-                printf "      ${YELLOW}⚠ Failed to apply %s (invalid number)${NC}\n" "$path"; rm -f "$tmp_file"; return 1
-            }
-            ;;
+        string) filter="$path = \$v" ;;
+        number) filter="$path = (\$v | tonumber)" ;;
         boolean)
             case "$value" in
-                true|TRUE|1|yes|YES) jq "$path = true" "$CONFIG_FILE" > "$tmp_file" 2>/dev/null || { printf "      ${YELLOW}⚠ Failed to apply %s${NC}\n" "$path"; rm -f "$tmp_file"; return 1; } ;;
-                false|FALSE|0|no|NO)  jq "$path = false" "$CONFIG_FILE" > "$tmp_file" 2>/dev/null || { printf "      ${YELLOW}⚠ Failed to apply %s${NC}\n" "$path"; rm -f "$tmp_file"; return 1; } ;;
+                true|TRUE|1|yes|YES) filter="$path = true" ;;
+                false|FALSE|0|no|NO) filter="$path = false" ;;
                 *) printf "      ${YELLOW}⚠ Invalid boolean value for %s: %s${NC}\n" "$path" "$value"; return 1 ;;
             esac
             ;;
         auto)
             case "$value" in
-                true|false) jq "$path = $value" "$CONFIG_FILE" > "$tmp_file" 2>/dev/null || { printf "      ${YELLOW}⚠ Failed to apply %s${NC}\n" "$path"; rm -f "$tmp_file"; return 1; } ;;
-                *)          jq "$path = \"$value\"" "$CONFIG_FILE" > "$tmp_file" 2>/dev/null || { printf "      ${YELLOW}⚠ Failed to apply %s${NC}\n" "$path"; rm -f "$tmp_file"; return 1; } ;;
+                true|false) filter="$path = (\$v == \"true\")" ;;
+                *)          filter="$path = \$v" ;;
             esac
             ;;
     esac
+
+    if ! jq --arg v "$value" "$filter" "$CONFIG_FILE" > "$tmp_file" 2>/dev/null; then
+        printf "      ${YELLOW}⚠ Failed to apply %s${NC}\n" "$path"
+        rm -f "$tmp_file"
+        return 1
+    fi
 
     mv -f "$tmp_file" "$CONFIG_FILE"
 }
@@ -108,12 +109,19 @@ display_config_value() {
     local label="$1"
     local jq_path="$2"
     local default_val="$3"
-    local color="${4:-GREEN}"
+    local color="${4-GREEN}"
+    local color_code=""
+
+    # $4 names one of the utils.sh color variables (GREEN, CYAN, ...)
+    [ -n "$color" ] && eval "color_code=\${$color:-}"
 
     log_step "$label"
     local value=$(jq -r "$jq_path" "$CONFIG_FILE" 2>/dev/null || echo "$default_val")
     if [ -n "$value" ] && [ "$value" != "null" ]; then
-        printf "${color}%s${NC}\n" "$value"
+        case "$label" in
+            *"Password"*) printf "${GREEN}enabled${NC} ${DIM}(hidden)${NC}\n" ;;
+            *)            printf "${color_code}%s${NC}\n" "$value" ;;
+        esac
     else
         case "$label" in *"Password"*) printf "${DIM}disabled${NC}\n" ;; *) printf "${DIM}not set${NC}\n" ;; esac
     fi
@@ -140,14 +148,14 @@ fi
 
 # Step 2: Apply environment variable overrides
 log_step "Applying environment overrides"
-apply_env ".ServerName"               "${HYTALE_SERVER_NAME:-}"       "string"
-apply_env ".MOTD"                     "${HYTALE_MOTD:-}"              "string"
-apply_env ".Password"                 "${HYTALE_PASSWORD:-}"          "string"
-apply_env ".MaxPlayers"               "${HYTALE_MAX_PLAYERS:-}"       "number"
-apply_env ".MaxViewRadius"            "${HYTALE_MAX_VIEW_RADIUS:-}"   "number"
-apply_env ".LocalCompressionEnabled"  "${HYTALE_COMPRESSION:-}"       "boolean"
-apply_env ".Defaults.World"           "${HYTALE_WORLD:-}"             "string"
-apply_env ".Defaults.GameMode"        "${HYTALE_GAMEMODE:-}"          "string"
+apply_env ".ServerName"               "${HYTALE_SERVER_NAME:-}"       "string" || true
+apply_env ".MOTD"                     "${HYTALE_MOTD:-}"              "string" || true
+apply_env ".Password"                 "${HYTALE_PASSWORD:-}"          "string" || true
+apply_env ".MaxPlayers"               "${HYTALE_MAX_PLAYERS:-}"       "number" || true
+apply_env ".MaxViewRadius"            "${HYTALE_MAX_VIEW_RADIUS:-}"   "number" || true
+apply_env ".LocalCompressionEnabled"  "${HYTALE_COMPRESSION:-}"       "boolean" || true
+apply_env ".Defaults.World"           "${HYTALE_WORLD:-}"             "string" || true
+apply_env ".Defaults.GameMode"        "${HYTALE_GAMEMODE:-}"          "string" || true
 log_success
 
 # Step 3: Display configuration summary

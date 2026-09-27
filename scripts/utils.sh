@@ -102,6 +102,29 @@ log_error() {
     fi
 }
 
+# Hand files that are not yet owned by the runtime user over to it.
+# Only touches mismatched entries, so it stays fast on large worlds, and is a
+# no-op when the container already runs unprivileged (e.g. Podman keep-id).
+fix_ownership() {
+    local target="${1:-${BASE_DIR:-/home/container}}"
+    [ "$(id -u)" = "0" ] || return 0
+    find "$target" \( ! -user "${UID:-1000}" -o ! -group "${GID:-1000}" \) \
+        -exec chown -h "${UID:-1000}:${GID:-1000}" {} + 2>/dev/null || true
+}
+
+# Restrict credential files to the owner. They hold the server's Hytale
+# session and the downloader's OAuth tokens.
+protect_secrets() {
+    local base="${BASE_DIR:-/home/container}"
+    for f in \
+        "$base/.hytale-downloader-credentials.json" \
+        "$base/.hardware-id" \
+        "$base/Server/auth.enc" \
+        "$base/Server/auth.key"; do
+        [ -f "$f" ] && chmod 600 "$f" 2>/dev/null || true
+    done
+}
+
 # ==========================================
 # MAIN EXECUTION FLOW
 # ==========================================
