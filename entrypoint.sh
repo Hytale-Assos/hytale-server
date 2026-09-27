@@ -26,13 +26,21 @@ stdbuf -oL -eL true 2>/dev/null && USE_STDBUF=true || USE_STDBUF=false
 # Bootstrap SCRIPTS_PATH for environment loading
 export SCRIPTS_PATH="/usr/local/bin/scripts"
 
-# Fix host mount permissions while we are root at boot
-if [ "$(id -u)" = "0" ]; then
-    chown -R container:container /home/container
-fi
+# Load all environment variables and configuration defaults
+. "$SCRIPTS_PATH/environment.sh"
 
-# Generate /etc/machine-id if missing (Docker containers lack this by default)
-if [ ! -f "/etc/machine-id" ] || [ ! -s "/etc/machine-id" ]; then
+# Load utility functions for logging
+. "$SCRIPTS_PATH/utils.sh"
+
+# Fix host mount ownership while we are root at boot. When the container is
+# started unprivileged (Podman `UserNS=keep-id`), the mount is already owned by
+# the runtime user and this is skipped.
+fix_ownership "$BASE_DIR"
+
+# Generate /etc/machine-id if missing (Docker containers lack this by default).
+# Only possible as root on a writable rootfs; otherwise hytale_auth.sh falls
+# back to a persistent ID stored in the data volume.
+if { [ ! -f "/etc/machine-id" ] || [ ! -s "/etc/machine-id" ]; } && [ -w /etc ]; then
     if command -v uuidgen >/dev/null 2>&1; then
         uuidgen > /etc/machine-id
     elif [ -f "/proc/sys/kernel/random/uuid" ]; then
@@ -42,12 +50,6 @@ if [ ! -f "/etc/machine-id" ] || [ ! -s "/etc/machine-id" ]; then
         printf '%s' "${HOSTNAME:-hytale-server}-machine-id" | sha256sum | cut -d' ' -f1 > /etc/machine-id
     fi
 fi
-
-# Load all environment variables and configuration defaults
-. "$SCRIPTS_PATH/environment.sh"
-
-# Load utility functions for logging
-. "$SCRIPTS_PATH/utils.sh"
 
 # Check if running old folder structure and migrate if necessary
 sh "$SCRIPTS_PATH/hytale/hytale_legacy_backup.sh"

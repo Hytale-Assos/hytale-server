@@ -37,11 +37,13 @@ init_auth_pipes() {
     chmod 755 "$AUTH_DIR"
     rm -f "$AUTH_PIPE" "$AUTH_OUTPUT_LOG"
     mkfifo "$AUTH_PIPE"
-    chmod 666 "$AUTH_PIPE"
+    # Owner-only: the FIFO is the server console. Root (auth monitor, stop
+    # handler, `docker exec`) can still write to it.
+    chmod 600 "$AUTH_PIPE"
     touch "$AUTH_OUTPUT_LOG"
 
     if [ "$(id -u)" = "0" ]; then
-        chown "${UID:-1000}:${GID:-1000}" "$AUTH_OUTPUT_LOG" 2>/dev/null || true
+        chown "${UID:-1000}:${GID:-1000}" "$AUTH_PIPE" "$AUTH_OUTPUT_LOG" 2>/dev/null || true
     fi
 
     export AUTH_PIPE
@@ -156,7 +158,6 @@ start_auth_monitor() {
 
 log_section "Authentication Management"
 
-RUN_AUTO_AUTH="TRUE"
 AUTH_CREDENTIALS_PRESENT="FALSE"
 
 init_auth_pipes

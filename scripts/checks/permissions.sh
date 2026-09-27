@@ -30,8 +30,12 @@ BASE_DIR="${BASE_DIR:-/home/container}"
 
 # Ensure home directory has proper ownership
 log_step "Setting Home Directory Ownership"
-chown -R container:container "$BASE_DIR" 2>/dev/null || true
+fix_ownership "$BASE_DIR"
 chmod 755 "$BASE_DIR" 2>/dev/null || true
+log_success
+
+log_step "Protecting Credential Files"
+protect_secrets
 log_success
 
 if [ ! -d "$GAME_DIR/Server" ]; then
@@ -52,8 +56,8 @@ log_step "Setting Executable File Permissions"
 log_success
 
 log_step "Setting Config File Permissions"
-# Set config files to read/write (644)
-find "$GAME_DIR/Server" -maxdepth 1 -type f \( -name "*.json" -o -name "*.enc" -o -name "*.bak" \) -exec chmod 644 {} \; 2>/dev/null || true
+# Set config files to read/write (644). auth.enc is handled by protect_secrets.
+find "$GAME_DIR/Server" -maxdepth 1 -type f \( -name "*.json" -o -name "*.bak" \) -exec chmod 644 {} \; 2>/dev/null || true
 log_success
 
 log_step "Setting Directory Permissions"
@@ -61,15 +65,12 @@ log_step "Setting Directory Permissions"
 find "$GAME_DIR/Server" -type d -exec chmod 755 {} \; 2>/dev/null || true
 log_success
 
-log_step "Verifying Ownership"
-# Final verification that all files are owned by the container user
-chown -R container:container "$GAME_DIR" 2>/dev/null || true
-log_success
 
 if [ "${DEBUG:-FALSE}" = "TRUE" ]; then
     printf "      ${DIM}↳ Binaries (.jar):${NC} ${GREEN}755${NC} (rwxr-xr-x)\n"
     printf "      ${DIM}↳ Executables (Assets.zip, start.sh, start.bat):${NC} ${GREEN}755${NC} (rwxr-xr-x)\n"
-    printf "      ${DIM}↳ Configs (.json, .enc):${NC} ${GREEN}644${NC} (rw-r--r--)\n"
+    printf "      ${DIM}↳ Configs (.json):${NC} ${GREEN}644${NC} (rw-r--r--)\n"
+    printf "      ${DIM}↳ Credentials (auth.*, downloader):${NC} ${GREEN}600${NC} (rw-------)\n"
     printf "      ${DIM}↳ Directories:${NC} ${GREEN}755${NC} (rwxr-xr-x)\n"
     printf "      ${DIM}↳ Owner:${NC} ${GREEN}container:container${NC}\n"
 fi

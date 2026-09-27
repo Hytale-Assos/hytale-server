@@ -29,15 +29,43 @@
 # HELPER FUNCTIONS
 # ==========================================
 
+# Staged updates come from two places: hytale_update.sh (a *.zip dropped into
+# the volume) and the in-game /update command. Returns non-zero when nothing
+# was staged.
 apply_staged_update() {
-    [ ! -f "updater/staging/Server/HytaleServer.jar" ] && return
+    [ -f "updater/staging/Server/HytaleServer.jar" ] || return 1
 
     log_step "Applying staged update"
+    mkdir -p Server
     cp -f updater/staging/Server/HytaleServer.jar Server/
     [ -d "updater/staging/Server/Licenses" ]           && rm -rf Server/Licenses && cp -r updater/staging/Server/Licenses Server/
     [ -f "updater/staging/Assets.zip" ]                && cp -f updater/staging/Assets.zip ./
+    # Zip updates carry their version; the in-game /update does not report it
+    if [ -f "updater/staging/.hytale-version" ]; then
+        cp -f updater/staging/.hytale-version ./.hytale-version
+    else
+        echo "unknown" > ./.hytale-version
+    fi
     rm -rf updater/staging
     log_success
+}
+
+# The image is tagged with the Hytale release it was built for, but the
+# server is downloaded at runtime and updates itself: show both.
+report_hytale_version() {
+    local installed="unknown"
+    [ -s ".hytale-version" ] && installed=$(cat .hytale-version)
+
+    log_step "Hytale server version"
+    printf "${GREEN}%s${NC}\n" "$installed"
+
+    [ -n "${HYTALE_TARGET_VERSION:-}" ] || return 0
+    if [ "$installed" = "unknown" ]; then
+        printf "      ${DIM}↳ Image built for Hytale %s${NC}\n" "$HYTALE_TARGET_VERSION"
+    elif [ "$installed" != "$HYTALE_TARGET_VERSION" ]; then
+        log_warning "Installed server ($installed) differs from the image's target ($HYTALE_TARGET_VERSION)." \
+            "Normal right after a release: the in-game updater or the next image converges them."
+    fi
 }
 
 build_java_command() {
@@ -91,11 +119,27 @@ stdbuf -oL -eL java $JAVA_ARGS \
 JAVAEOF
 }
 
+# SIGTERM/SIGINT (docker stop, systemctl stop) only reach this shell, never
+# java, which sits behind a pipeline. Ask the server to save and shut down
+# through its console instead of letting the runtime SIGKILL it later.
+request_stop() {
+    STOP_REQUESTED=true
+    printf "\n"
+    log_step "Stop signal received, sending '$HYTALE_STOP_COMMAND'"
+    { printf "%s\n" "$HYTALE_STOP_COMMAND" > "$AUTH_PIPE"; } 2>/dev/null || true
+    printf "\n"
+}
+
 run_server() {
     local java_cmd="$1"
-    RUNTIME_CMD="${RUNTIME:-}"
+    local exit_file="/tmp/hytale-auth/java.exit"
+    # Pre-create it: java may run as the unprivileged user in a root-owned dir
+    : > "$exit_file"
+    if [ "$(id -u)" = "0" ]; then
+        chown "${UID:-1000}:${GID:-1000}" "$exit_file" 2>/dev/null || true
+    fi
 
-    # 1. Copy Docker STDIN (0) to a new file descriptor channel (4)
+    # 1. Copy container STDIN (0) to a new file descriptor channel (4)
     # This prevents the background process from being detached to /dev/null
     exec 4<&0
 
@@ -104,61 +148,75 @@ run_server() {
     ( while read -r line <&4; do printf "%s\n" "$line" >> "$AUTH_PIPE"; done ) &
     local INPUT_PID=$!
 
-    # 3. Start the Java server with channel 3 connected to the AUTH_PIPE
-    $RUNTIME sh -c "exec 3<>\"$AUTH_PIPE\"; $java_cmd <&3 2>&1 | stdbuf -oL -eL sed 's/\r$//' | stdbuf -oL -eL tee \"$AUTH_OUTPUT_LOG\""
+    # 3. Start the Java server with channel 3 connected to the AUTH_PIPE.
+    # A pipeline's status is the one of its last command (tee), so java's own
+    # exit code is written to a file to keep exit code 8 (update) visible.
+    $RUNTIME sh -c "exec 3<>\"$AUTH_PIPE\"; { $java_cmd <&3; echo \$? > \"$exit_file\"; } 2>&1 | stdbuf -oL -eL sed 's/\r\$//' | stdbuf -oL -eL tee \"$AUTH_OUTPUT_LOG\"" &
+    local SERVER_PID=$!
+
+    trap request_stop TERM INT
+    # `wait` returns early when a trapped signal arrives; keep waiting until
+    # the server has actually exited.
+    wait "$SERVER_PID"
+    while kill -0 "$SERVER_PID" 2>/dev/null; do
+        wait "$SERVER_PID"
+    done
+    trap - TERM INT
 
     # 4. Clean up the processes and channels gracefully when the server stops
-    kill $INPUT_PID 2>/dev/null
+    kill "$INPUT_PID" 2>/dev/null
     exec 4<&-
+
+    JAVA_EXIT_CODE=1
+    [ -s "$exit_file" ] && JAVA_EXIT_CODE=$(cat "$exit_file")
 }
 
-handle_exit_code() {
+warn_failed_update() {
     local exit_code="$1"
     local elapsed="$2"
-    local applied_update="$3"
 
-    # Exit code 8 = restart to apply update from /update download command
-    if [ $exit_code -eq 8 ]; then
-        log_step "Server requesting restart (exit code 8) - triggering container restart"
-        log_success
-        exit 8
-    fi
-
-    # Warn on crash shortly after update
-    if [ $exit_code -ne 0 ] && [ "$applied_update" = true ] && [ $elapsed -lt 30 ]; then
-        log_error "Server crashed ${elapsed}s after update" "Exit code: $exit_code"
-        printf "\n${YELLOW}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}\n"
-        printf "${YELLOW}Update Failed${NC}\n"
-        printf "${YELLOW}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}\n\n"
-        printf "Server crashed within ${elapsed}s of applying the update.\n"
-        printf "This may indicate the update is incompatible.\n\n"
-        printf "${DIM}Check logs in: /home/container/Server/logs/${NC}\n\n"
-        printf "${YELLOW}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}\n"
-    fi
-
-    exit $exit_code
+    log_error "Server crashed ${elapsed}s after update" "Exit code: $exit_code"
+    printf "\n${YELLOW}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}\n"
+    printf "${YELLOW}Update Failed${NC}\n"
+    printf "${YELLOW}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}\n\n"
+    printf "Server crashed within ${elapsed}s of applying the update.\n"
+    printf "This may indicate the update is incompatible.\n\n"
+    printf "${DIM}Check logs in: /home/container/Server/logs/${NC}\n\n"
+    printf "${YELLOW}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}\n"
 }
 
 # ==========================================
 # MAIN EXECUTION FLOW
 # ==========================================
 
+STOP_REQUESTED=false
 cd "$GAME_DIR"
 
 while true; do
     APPLIED_UPDATE=false
-
-    # Apply staged update if present
     apply_staged_update && APPLIED_UPDATE=true
+    report_hytale_version
 
     cd Server
     START_TIME=$(date +%s)
 
     JAVA_CMD=$(build_java_command)
     run_server "$JAVA_CMD"
-    EXIT_CODE=$?
     ELAPSED=$(($(date +%s) - START_TIME))
 
     cd "$GAME_DIR"
-    handle_exit_code $EXIT_CODE $ELAPSED $APPLIED_UPDATE
+
+    # Exit code 8 = the in-game /update command staged an update and asked
+    # for a restart: apply it and relaunch in place.
+    if [ "$JAVA_EXIT_CODE" -eq 8 ] && [ "$STOP_REQUESTED" != true ]; then
+        log_step "Server requested restart (exit code 8)"
+        log_success
+        continue
+    fi
+
+    if [ "$JAVA_EXIT_CODE" -ne 0 ] && [ "$APPLIED_UPDATE" = true ] && [ "$ELAPSED" -lt 30 ]; then
+        warn_failed_update "$JAVA_EXIT_CODE" "$ELAPSED"
+    fi
+
+    exit "$JAVA_EXIT_CODE"
 done

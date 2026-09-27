@@ -65,6 +65,19 @@ check_string() {
     fi
 }
 
+# Never echo credentials: boot output ends up in container logs / journald
+check_secret() {
+    local label="$1"
+    local env_var="${2:-}"
+
+    log_step "$label"
+    if [ -n "$env_var" ]; then
+        printf "${GREEN}set${NC} ${DIM}(hidden)${NC}\n"
+    else
+        print_not_set
+    fi
+}
+
 check_string_default() {
     local label="$1"
     local env_var="${2:-}"
@@ -210,7 +223,7 @@ else
     print_default
 fi
 
-check_string  "Identity Token"      "${HYTALE_IDENTITY_TOKEN:-}"
+check_secret  "Identity Token"      "${HYTALE_IDENTITY_TOKEN:-}"
 [ -n "${HYTALE_IDENTITY_TOKEN:-}" ] && set_flag HYTALE_IDENTITY_TOKEN_OPT "--identity-token=$HYTALE_IDENTITY_TOKEN"
 
 log_step "Log Level"
@@ -244,7 +257,7 @@ else
     print_default
 fi
 
-check_string  "Session Token"       "${HYTALE_SESSION_TOKEN:-}"
+check_secret  "Session Token"       "${HYTALE_SESSION_TOKEN:-}"
 [ -n "${HYTALE_SESSION_TOKEN:-}" ] && set_flag HYTALE_SESSION_TOKEN_OPT "--session-token=$HYTALE_SESSION_TOKEN"
 
 log_step "Transport Type"
