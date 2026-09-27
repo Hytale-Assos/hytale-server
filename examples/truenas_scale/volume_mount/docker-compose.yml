@@ -13,6 +13,7 @@ services:
     ports:
       - 5520:5520/udp
     restart: unless-stopped
+    stop_grace_period: 90s
     stdin_open: True
     tty: False
     user: '1000:1000'

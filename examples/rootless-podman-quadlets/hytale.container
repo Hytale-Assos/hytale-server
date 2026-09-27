@@ -1,23 +1,60 @@
-[Service]
-Description=Hytale Quadlet
+# Hytale server as a rootless Podman Quadlet.
+# Install: see README.md in this folder.
+
+[Unit]
+Description=Hytale server
+Wants=network-online.target
+After=network-online.target
 
 [Container]
 ContainerName=hytale
-Image=docker.io/deinfreu/hytale-server:experimental
+# Built and published by .github/workflows/ci.yml (GitHub Packages), tagged
+# with the Hytale release it targets. :latest is pulled by `podman auto-update`;
+# pin a release tag (e.g. :0.6.8) to upgrade only when you decide to.
+Image=ghcr.io/hytale-assos/hytale-server:latest
 AutoUpdate=registry
-Network=default.network
+
 PublishPort=5520:5520/udp
-EnvironmentFile=%h/.config/containers/systemd/hytale.env
-Volume=%h/files/hytale:/home/container
-Volume=/etc/machine-id:/etc/machine-id:ro
-# Use same UID/GID in container and host
-UserNS=keep-id
-# Enable interactive terminal (Options "tty: true" and "stdin: true" in docker-compose)
-PodmanArgs=--attach stdin --tty
-# If running on an OS with SELinux, use these Volume declarations instead
-# (Create ~/files/.secrets/machine-id yourself, using dbus-uuidgen)
-#Volume=%h/files/hytale:/home/container:z
-#Volume=%h/files/.secrets/machine-id:/etc/machine-id:z,ro
+
+# Relative to this file's directory
+EnvironmentFile=hytale.env
+# Optional secrets, created with `podman secret create` (see README.md)
+#Secret=hytale-password,type=env,target=HYTALE_PASSWORD
+
+# Server data. :Z relabels for SELinux and is harmless elsewhere.
+Volume=%h/hytale/data:/home/container:Z
+# Stable machine ID: the server derives the key of its encrypted credentials
+# (Server/auth.enc) from it. A private copy avoids relabeling the host's file.
+Volume=%h/hytale/machine-id:/etc/machine-id:ro,Z
+
+# Your host user becomes the image's `container` user (1000:1000): files in
+# ~/hytale/data stay owned by you and the entrypoint never needs root.
+UserNS=keep-id:uid=1000,gid=1000
+
+# Hardening: the server binary is proprietary, so contain it.
+NoNewPrivileges=true
+DropCapability=all
+# Read-only rootfs; /tmp, /var/tmp and /run are tmpfs. Only the data volume
+# is writable. Comment out if a mod needs to write elsewhere.
+ReadOnly=true
+
+Ulimit=nofile=65536:65536
+# Hard memory cap. The JVM sizes its heap from it (MaxRAMPercentage=75 by
+# default, see JAVA_ARGS in hytale.env).
+PodmanArgs=--memory=8g
+
+# On stop, the entrypoint sends `/stop` to the console so the world is saved.
+# Give it time before Podman falls back to SIGKILL.
+StopTimeout=90
+
+[Service]
+# Crash -> restart. A clean `/stop` or `systemctl stop` exits 0 and stays down.
+Restart=on-failure
+RestartSec=10
+# The first start pulls the image from GitHub Packages; the ~1 GB of server
+# files are downloaded afterwards, once the unit is already marked started.
+TimeoutStartSec=900
+TimeoutStopSec=120
 
 [Install]
 WantedBy=default.target
