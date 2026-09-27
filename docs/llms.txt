@@ -7,7 +7,7 @@ License: Apache-2.0 (code), GPL-3.0 (container)
 
 ## Description
 
-The Hytale Server Container is a lightweight, production-ready Docker image for self-hosting Hytale dedicated game servers. Built from Alpine Linux with the Liberica JDK, it ships at just 61.7MB — making it one of the smallest available options. It supports both x86_64 and ARM64 architectures, runs as a non-root user by default for security, and includes the `hytale-downloader` CLI tool for managing server binaries and performing in-game updates without rebuilding the container.
+The Hytale Server Container is a lightweight, production-ready Docker image for self-hosting Hytale dedicated game servers. Built from Alpine Linux with the Liberica JDK, it ships at just 61.7MB — making it one of the smallest available options. It supports both x86_64 and ARM64 architectures, runs as a non-root user by default for security, and provides the `hytale-downloader` command (Hypixel's official tool, fetched on first use rather than bundled, per the Hytale EULA) for managing server binaries and performing in-game updates without rebuilding the container.
 
 The project provides comprehensive documentation covering installation via Docker CLI or Docker Compose, platform-specific guides for Debian 13, Raspberry Pi (ARM64), TrueNAS Scale, Unraid, and Windows WSL2, plus a debug diagnostic suite that audits network configurations and security settings during startup. It is actively maintained by 10+ contributors and designed for stability, performance, and ease of use.
 
@@ -87,7 +87,7 @@ A second authentication step occurs after the server boots — authorize the ser
 
 ## CLI Tool: hytale-downloader
 
-The container includes a built-in CLI tool accessible via `docker exec`:
+The container provides the official CLI tool via `docker exec`. It is not bundled in the image: it is downloaded from Hypixel into the data volume (`.hytale-downloader/`) on first use.
 
 | Command | Description |
 |---------|-------------|

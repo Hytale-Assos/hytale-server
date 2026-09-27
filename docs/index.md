@@ -41,7 +41,7 @@ For now, enjoy the smooth sailing and have fun playing the game! If you have any
 
 * **Lightweight & Efficient:** Optimized images starting at just **61.7MB**, ensuring fast pulls and minimal resource consumption.
 * **Multi-Arch Support:** Full native support for both `x86_64` and `ARM64` architectures.
-* **Smart CLI:** Includes the `hytale-downloader` tool, allowing you to manage server binaries and check for updates directly from your terminal.
+* **Smart CLI:** Provides the `hytale-downloader` command, allowing you to manage server binaries and check for updates directly from your terminal. Hypixel's official downloader is fetched on first use and never bundled in the image, as required by the Hytale EULA.
 * **Secure by Design:** Engineered for secure, non-root execution by default.
 * **Diagnostic Suite:** Built-in debug mode to automatically audit your network and security settings.
 * **Seamless Updates:** Integrated tools designed for effortless, in-game server updates.

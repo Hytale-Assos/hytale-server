@@ -1,16 +1,19 @@
 # syntax=docker/dockerfile:1.7
 
+# Alpine image, two JRE flavors from one file:
+#   docker build -f Dockerfile.alpine .                          -> Eclipse Temurin
+#   docker build -f Dockerfile.alpine --build-arg JRE=liberica . -> BellSoft Liberica (smallest)
+ARG JRE=temurin
+
+# The image ships no Hypixel file (Hytale EULA §3.3): the official
+# hytale-downloader and the server are fetched at first start, with the
+# operator's own Hytale account (see scripts/hytale/hytale_downloader.sh).
+
 # STAGE 1: Builder
 FROM alpine:3.24 AS builder
-RUN apk add --no-cache curl unzip 7zip dos2unix
+RUN apk add --no-cache dos2unix
 
 WORKDIR /build
-
-# Download and extract Hytale Downloader
-RUN curl -L -o hytale.zip https://downloader.hytale.com/hytale-downloader.zip && \
-    7z x hytale.zip -y -o./hytale -mmt=on && \
-    mv ./hytale/hytale-downloader-linux-amd64 ./hytale-downloader && \
-    chmod +x ./hytale-downloader && rm -rf hytale hytale.zip
 
 # Prepare scripts
 COPY scripts/ ./scripts/
@@ -18,8 +21,12 @@ COPY entrypoint.sh .
 RUN find scripts -type f -name "*.sh" -exec dos2unix {} + && \
     dos2unix entrypoint.sh && chmod -R +x scripts && chmod +x entrypoint.sh
 
+# JRE flavors (listed as plain FROM lines so Dependabot keeps bumping them)
+FROM eclipse-temurin:25.0.3_9-jre-alpine-3.23 AS runtime-temurin
+FROM bellsoft/liberica-openjre-alpine-musl:25.0.3-11 AS runtime-liberica
+
 # STAGE 2: Final Runtime
-FROM eclipse-temurin:25.0.3_9-jre-alpine-3.23
+FROM runtime-${JRE}
 
 # Build arguments for customizable UID/GID
 ARG UID=1000
@@ -29,17 +36,21 @@ ARG GID=1000
 ARG BUILDTIME=local
 ARG VERSION=local
 ARG REVISION=local
+# Hytale server release this image was built for (set by CI from Hypixel's
+# public Maven metadata). The server itself is downloaded at runtime.
+ARG HYTALE_TARGET_VERSION=""
 
 # OCI Metadata
 LABEL org.opencontainers.image.title="Hytale Server" \
-    org.opencontainers.image.description="Hytale Docker server image with non-root execution, UDP optimization, and diagnostics." \
-    org.opencontainers.image.authors="deinfreu" \
-    org.opencontainers.image.url="https://github.com/deinfreu/hytale-server-container" \
-    org.opencontainers.image.source="https://github.com/deinfreu/hytale-server-container" \
+    org.opencontainers.image.description="Hytale server container: downloads the official server at first start. Contains no Hytale files; a Hytale license is required." \
+    org.opencontainers.image.authors="deinfreu, Hytale-Assos" \
+    org.opencontainers.image.url="https://github.com/Hytale-Assos/hytale-server" \
+    org.opencontainers.image.source="https://github.com/Hytale-Assos/hytale-server" \
     org.opencontainers.image.version="${VERSION}" \
     org.opencontainers.image.revision="${REVISION}" \
     org.opencontainers.image.created="${BUILDTIME}" \
-    org.opencontainers.image.licenses="Apache-2.0"
+    org.opencontainers.image.licenses="GPL-3.0-or-later" \
+    hytale.server.version="${HYTALE_TARGET_VERSION}"
 
 # Runtime configuration
 ENV USER=container \
@@ -51,12 +62,13 @@ ENV USER=container \
     SERVER_IP="" \
     JAVA_ARGS="" \
     PROD=FALSE \
-    DEBUG=FALSE
+    DEBUG=FALSE \
+    HYTALE_TARGET_VERSION="${HYTALE_TARGET_VERSION}"
 
 # Install dependencies
 RUN apk add --no-cache tini su-exec curl iproute2 ca-certificates tzdata jq libc6-compat libstdc++ gcompat 7zip coreutils
 
-# Install QEMU static binary for x86_64 emulation (host must register binfmt)
+# Install QEMU for x86_64 emulation: Hypixel only ships an x86_64 downloader
 ARG TARGETARCH
 RUN if [ "$TARGETARCH" = "arm64" ]; then \
         echo "[INFO] Detected ARM64, installing QEMU static binary for x86_64 emulation..."; \
@@ -89,23 +101,18 @@ RUN mkdir -p ${HOME} && \
     chmod 755 ${HOME}
 
 # Copy artifacts from builder
-COPY --from=builder --chown=root:root /build/hytale-downloader /usr/local/bin/hytale-downloader-bin
 COPY --from=builder --chown=${USER}:${USER} /build/scripts/ /usr/local/bin/scripts/
 COPY --from=builder --chown=${USER}:${USER} /build/entrypoint.sh /entrypoint.sh
 
-# Create QEMU wrapper for hytale-downloader on ARM64
-ARG TARGETARCH
-RUN if [ "$TARGETARCH" = "arm64" ]; then \
-        QEMU_BIN=$(which qemu-x86_64-static || which qemu-x86_64) && \
-        echo '#!/bin/sh' > /usr/local/bin/hytale-downloader && \
-        echo "exec $QEMU_BIN /usr/local/bin/hytale-downloader-bin \"\$@\"" >> /usr/local/bin/hytale-downloader && \
-        chmod +x /usr/local/bin/hytale-downloader; \
-    else \
-        mv /usr/local/bin/hytale-downloader-bin /usr/local/bin/hytale-downloader; \
-    fi
+# Commands:
+#   hytale-downloader  installs Hypixel's downloader on first use, then runs it
+#   hytale-cmd         sends a console command: `docker exec <c> hytale-cmd /op add <player>`
+RUN ln -s /usr/local/bin/scripts/hytale/hytale_downloader.sh /usr/local/bin/hytale-downloader && \
+    ln -s /usr/local/bin/scripts/hytale/hytale_console.sh /usr/local/bin/hytale-cmd
 
 # Image metadata file
-RUN printf "buildtime=%s\nversion=%s\nrevision=%s\n" "${BUILDTIME}" "${VERSION}" "${REVISION}" > /etc/image.properties
+RUN printf "buildtime=%s\nversion=%s\nrevision=%s\nhytale_target_version=%s\n" \
+        "${BUILDTIME}" "${VERSION}" "${REVISION}" "${HYTALE_TARGET_VERSION}" > /etc/image.properties
 
 # Final setup
 WORKDIR ${HOME}

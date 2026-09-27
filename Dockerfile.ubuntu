@@ -1,22 +1,20 @@
 # syntax=docker/dockerfile:1.7
 
+# The image ships no Hypixel file (Hytale EULA §3.3): the official
+# hytale-downloader and the server are fetched at first start, with the
+# operator's own Hytale account (see scripts/hytale/hytale_downloader.sh).
+
 # --- STAGE 1: Builder (runs on target platform) ---
-FROM eclipse-temurin:25-jdk AS builder
+# Same base as the runtime so the layer is shared
+FROM eclipse-temurin:25-jre AS builder
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    curl p7zip-full dos2unix && \
+    dos2unix && \
     rm -rf /var/lib/apt/lists/*
 
 WORKDIR /build
 
-# 1. Download and extract Hytale Downloader (with retries for QEMU emulation slowness)
-RUN curl -L --retry 3 --retry-delay 5 -o hytale.zip https://downloader.hytale.com/hytale-downloader.zip && \
-    7z x hytale.zip -y -o./hytale -mmt=on && \
-    mv ./hytale/hytale-downloader-linux-amd64 ./hytale-downloader && \
-    chmod +x ./hytale-downloader && \
-    rm hytale.zip
-
-# 2. Prepare Scripts (fixing line endings and permissions)
+# 1. Prepare Scripts (fixing line endings and permissions)
 COPY scripts/ ./scripts/
 COPY entrypoint.sh .
 RUN find scripts -type f -name "*.sh" -exec dos2unix {} + && \
@@ -25,11 +23,20 @@ RUN find scripts -type f -name "*.sh" -exec dos2unix {} + && \
     chmod +x entrypoint.sh
 
 # --- STAGE 2: Final Runtime ---
-FROM eclipse-temurin:25-jdk AS runtime
+# JRE only: the server never compiles anything at runtime
+FROM eclipse-temurin:25-jre AS runtime
 
 # Build arguments for customizable UID/GID
 ARG UID=1000
 ARG GID=1000
+
+# OCI Metadata
+LABEL org.opencontainers.image.title="Hytale Server" \
+    org.opencontainers.image.description="Hytale server container: downloads the official server at first start. Contains no Hytale files; a Hytale license is required." \
+    org.opencontainers.image.authors="deinfreu, Hytale-Assos" \
+    org.opencontainers.image.url="https://github.com/Hytale-Assos/hytale-server" \
+    org.opencontainers.image.source="https://github.com/Hytale-Assos/hytale-server" \
+    org.opencontainers.image.licenses="GPL-3.0-or-later"
 
 # Configuration
 ENV USER=container \
@@ -46,7 +53,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     tini curl iproute2 ca-certificates unzip tzdata jq p7zip-full && \
     rm -rf /var/lib/apt/lists/*
 
-# 1.1. Install QEMU static binary for x86_64 emulation (direct download, no apt)
+# 1.1. Install QEMU for x86_64 emulation: Hypixel only ships an x86_64 downloader
 ARG TARGETARCH
 RUN if [ "$TARGETARCH" = "arm64" ]; then \
         echo "[INFO] Detected ARM64, downloading QEMU static binary for x86_64..."; \
@@ -84,24 +91,28 @@ RUN mkdir -p ${HOME} && \
     chmod 755 ${HOME}
 
 # 4. Copy Prepared Files from Builder
-COPY --from=builder --chown=root:root /build/hytale-downloader /usr/local/bin/hytale-downloader-bin
 COPY --from=builder --chown=${USER}:${USER} /build/scripts/ /usr/local/bin/scripts/
 COPY --from=builder --chown=${USER}:${USER} /build/entrypoint.sh /entrypoint.sh
 
-# 5. Create QEMU wrapper for hytale-downloader on ARM64
-RUN if [ "$TARGETARCH" = "arm64" ]; then \
-        echo '#!/bin/sh' > /usr/local/bin/hytale-downloader && \
-        echo 'exec /usr/local/bin/qemu-x86_64-static /usr/local/bin/hytale-downloader-bin "$@"' >> /usr/local/bin/hytale-downloader && \
-        chmod +x /usr/local/bin/hytale-downloader; \
-    else \
-        mv /usr/local/bin/hytale-downloader-bin /usr/local/bin/hytale-downloader; \
-    fi
+# 5. Commands:
+#   hytale-downloader  installs Hypixel's downloader on first use, then runs it
+#   hytale-cmd         sends a console command: `docker exec <c> hytale-cmd /op add <player>`
+RUN ln -s /usr/local/bin/scripts/hytale/hytale_downloader.sh /usr/local/bin/hytale-downloader && \
+    ln -s /usr/local/bin/scripts/hytale/hytale_console.sh /usr/local/bin/hytale-cmd
 
 # 6. Build Metadata
 ARG BUILDTIME=local
 ARG VERSION=local
 ARG REVISION=local
-RUN printf "buildtime=${BUILDTIME}\nversion=${VERSION}\nrevision=${REVISION}\n" > /etc/image.properties
+# Hytale server release this image was built for (the server is downloaded at runtime)
+ARG HYTALE_TARGET_VERSION=""
+ENV HYTALE_TARGET_VERSION="${HYTALE_TARGET_VERSION}"
+LABEL org.opencontainers.image.version="${VERSION}" \
+    org.opencontainers.image.revision="${REVISION}" \
+    org.opencontainers.image.created="${BUILDTIME}" \
+    hytale.server.version="${HYTALE_TARGET_VERSION}"
+RUN printf "buildtime=%s\nversion=%s\nrevision=%s\nhytale_target_version=%s\n" \
+        "${BUILDTIME}" "${VERSION}" "${REVISION}" "${HYTALE_TARGET_VERSION}" > /etc/image.properties
 
 # Final Config
 WORKDIR ${HOME}
